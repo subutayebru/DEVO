@@ -12,12 +12,28 @@ import os
 import hdf5plugin # required for import of blosc
 import json
 import torch.nn.functional as F
+import sys 
 
 import torchvision
 
-from utils.event_utils import EventSlicer, to_voxel_grid, RemoveHotPixelsVoxel
-from utils.viz_utils import visualize_voxel, visualize_N_voxels, render
-from utils.transform_utils import transform_rescale
+current = os.path.dirname(os.path.realpath(__file__))
+parentt = os.path.dirname(current)
+parent = os.path.dirname(parentt)
+sys.path.append(parent)
+
+from devo_utils.event_utils import EventSlicer, to_voxel_grid, RemoveHotPixelsVoxel
+from devo_utils.viz_utils import visualize_voxel, visualize_N_voxels, render
+from devo_utils.transform_utils import transform_rescale
+
+
+def load_intrinsics_uw(path, camID=0):
+    path = "/home/ebru/DEVO/datasets/circles_darker_v_0.10_0"
+    with open(os.path.join(path, "calibration.json"), 'r') as f:
+        calibdata = json.load(f)["value0"]
+    calibdata = calibdata["intrinsics"][camID]["intrinsics"]
+    fx, fy, cx, cy = calibdata["fx"], calibdata["fy"], calibdata["cx"], calibdata["cy"]
+    intrinsics = [fx, fy, cx, cy]
+    return intrinsics
 
 def load_intrinsics_tumvie(path, camID=0):
     with open(os.path.join(path, "calib_undist.json"), 'r') as f:
@@ -44,22 +60,52 @@ def change_intrinsics_resize(intrinsics, H, W, H_orig=720, W_orig=1280):
     intrinsics = [fx, fy, cx, cy]
     return intrinsics
 
+import logging
+
+logging.basicConfig(level=logging.DEBUG)
+
 def read_batch_as_voxel(evs_slicer, t0_us, t1_us, rectify_map, trafos, Horig, Worig, Nbins=5):
+    # Retrieve events from the slicer
     ev_batch = evs_slicer.get_events(t0_us, t1_us)
+    
+    # Check if ev_batch is None
     if ev_batch is None:
+        logging.error("ev_batch is None")
         return None
+    
+    # Check if the events are empty
     if len(ev_batch["t"]) == 0:
-        print(f"lens: {len(ev_batch['x'])}, {len(ev_batch['y'])}, {len(ev_batch['t'])}, {len(ev_batch['p'])}\n")
+        logging.warning(f"Empty events: len(ev_batch['x'])={len(ev_batch['x'])}, len(ev_batch['y'])={len(ev_batch['y'])}, len(ev_batch['t'])={len(ev_batch['t'])}, len(ev_batch['p'])={len(ev_batch['p'])}")
         return None
-
+    
+    # Ensure rectify_map is not None and has valid dimensions
+    if rectify_map is None:
+        logging.error("rectify_map is None")
+        return None
+    
+    if not (isinstance(ev_batch["y"], list) and isinstance(ev_batch["x"], list)):
+        logging.error("ev_batch['y'] or ev_batch['x'] is not a list")
+        return None
+    
+    # Ensure that indices are within the bounds of rectify_map
+    max_y, max_x = rectify_map.shape[0], rectify_map.shape[1]
+    if max(ev_batch["y"]) >= max_y or max(ev_batch["x"]) >= max_x:
+        logging.error("Index out of bounds for rectify_map")
+        return None
+    
+    # Access rectify_map with valid indices
     rect = rectify_map[ev_batch["y"], ev_batch["x"]]
+    
+    # Convert to voxel grid
     voxel = to_voxel_grid(rect[..., 0], rect[..., 1], ev_batch["t"], ev_batch["p"], H=Horig, W=Worig, nb_of_time_bins=Nbins)
-
+    
+    # Apply transformations if any
     if trafos is not None:
         for t in trafos:
             voxel = t(voxel)
-    # visualize_voxel(voxel.detach(), EPS=1e-3)
+    
     return voxel
+
 
 def get_real_data_list(evs_slicer, tss_imgs_us, intrinsics, rectify_map, trafos, dT_ms, Horig, Worig):
     data_list = []
@@ -79,7 +125,101 @@ def get_real_data_list(evs_slicer, tss_imgs_us, intrinsics, rectify_map, trafos,
 def get_real_data_list_parallel(evs_slicer, tss_imgs_us, intrinsics, rectify_map, trafos, dT_ms, Horig, Worig, return_dict):
     data_list = get_real_data_list(evs_slicer, tss_imgs_us, intrinsics, rectify_map, trafos, dT_ms, Horig, Worig)
     return_dict.update({tss_imgs_us[0]: data_list})
+
+
+def uw_evs_iterator(scenedir, camID=2, stride=1, rectify_map=None, H=720, W=1280, dT_ms=None, timing=False, parallel=False, cors=16):
+    assert camID == 2 or camID == 3
+    side = "left" if camID == 2 else "right"
     
+    intrinsics = load_intrinsics_uw(scenedir, camID=camID)
+    rectify_map = None  # Adjust if you need to load rectification maps
+
+    full_path = osp.abspath(osp.join(scenedir, "bag_converted.h5"))
+    parent_dir = os.path.abspath(os.path.join(scenedir, os.pardir))
+    
+    # Debugging information
+    parent_dir_contents = os.listdir(parent_dir)
+    print(f"Contents of parent directory '{parent_dir}': {parent_dir_contents}")
+    
+    h5files = glob.glob(full_path)
+    dir_contents = os.listdir(scenedir)
+    print(f"Contents of directory '{scenedir}': {dir_contents}")
+
+    if not h5files:
+        print(f"Checked path: {full_path}")
+        raise FileNotFoundError(f"No 'bag_converted.h5' file found in directory {scenedir}")
+    h5file = h5files[0]
+
+    evs = h5py.File(h5file, "r")
+    evs_slicer = EventSlicer(evs)
+
+    # Load timestamps
+    tss_imgs_us = sorted(evs['events/t'][:])
+    if dT_ms is None:
+        dT_ms = np.diff(tss_imgs_us).mean() / 1e3
+    assert 3 < dT_ms < 100
+    tss_imgs_us = tss_imgs_us[::stride]
+
+    trafos = []
+    if H != 720 or W != 1280:
+        resize = torchvision.transforms.Resize((H, W))
+        intrinsics = change_intrinsics_resize(intrinsics, H, W, Horig=720, Worig=1280)
+        print(f"Warning: Resizing tumvie voxels to ({H}, {W}). Visualize and check")
+    else:
+        resize = lambda x: x
+    trafos.append(resize)
+
+    hotpixfilter = True
+    if hotpixfilter:
+        trafos.append(RemoveHotPixelsVoxel(num_stds=6))
+
+    if timing:
+        t0 = torch.cuda.Event(enable_timing=True)
+        t1 = torch.cuda.Event(enable_timing=True)
+        t0.record()
+
+    if not parallel:
+        data_list = get_real_data_list(evs_slicer, tss_imgs_us, intrinsics, rectify_map, trafos, dT_ms, Horig=720, Worig=1280)
+    else:
+        tss_imgs_us_split = np.array_split(tss_imgs_us, cors)
+        processes = []
+        return_dict = multiprocessing.Manager().dict()
+        for i in range(cors):
+            p = multiprocessing.Process(target=get_real_data_list_parallel, args=(evs_slicer, tss_imgs_us_split[i].tolist(), intrinsics, rectify_map, trafos, dT_ms, 720, 1280, return_dict))
+            p.start()
+            processes.append(p)
+            
+        for p in processes:
+            p.join()
+        
+        if timing:
+            t0sort = torch.cuda.Event(enable_timing=True)
+            t1sort = torch.cuda.Event(enable_timing=True)
+            t0sort.record()
+
+        keys = np.array(return_dict.keys())
+        order = np.argsort(keys)
+        data_list = []
+        for k in keys[order]:
+            data_list.extend(return_dict[k])
+
+        if timing:
+            t1sort.record()
+            torch.cuda.synchronize()
+            print(f"Sorted {len(data_list)} tumvie voxels in {t0sort.elapsed_time(t1sort)/1e3} secs")
+
+    if timing:  
+        t1.record()
+        torch.cuda.synchronize()
+        dt = t0.elapsed_time(t1) / 1e3
+        print(f"Preloaded {len(data_list)} TUMVIE voxels in {dt} secs, e.g. {len(data_list) / dt} FPS")
+    print(f"Preloaded {len(data_list)} TUMVIE voxels, imstart={0}, imstop={-1}, stride={stride}, dT_ms={dT_ms} on {scenedir}")
+
+    evs.close()
+
+    for (voxel, intrinsics, ts_us) in data_list:
+        yield voxel.cuda(), intrinsics.cuda(), ts_us
+
 
 def tumvie_evs_iterator(scenedir, camID=2, stride=1, rectify_map=None, H=720, W=1280, dT_ms=None, timing=False, parallel=False, cors=16):
     assert camID == 2 or camID == 3

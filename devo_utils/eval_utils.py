@@ -1,6 +1,11 @@
-
+#!/usr/bin/env python3
 import os
 import torch
+import sys
+current = os.path.dirname(os.path.realpath(__file__))
+parentt = os.path.dirname(current)
+parent = os.path.dirname(parentt)
+sys.path.append(parent)
 from devo.devo import DEVO
 from devo.utils import Timer
 from pathlib import Path
@@ -13,16 +18,20 @@ from natsort import natsorted
 import copy
 import math
 import shutil
+import rosbags
+try:
+    from rosbags.serde import serdes
+except ImportError:
+    print("rosbags.serde.serdes module not found.")
 from scipy.spatial.transform import Rotation as R
 from tabulate import tabulate
 
 from devo.plot_utils import plot_trajectory, fig_trajectory
 from devo.plot_utils import save_trajectory_tum_format
+from devo_utils.viz_utils import show_image, visualize_voxel
 
-from utils.viz_utils import show_image, visualize_voxel
-
-from evo.tools import file_interface
-import evo.main_ape as main_ape
+#from evo.tools import file_interface
+#import evo.main_ape as main_ape
 from evo.core import sync, metrics
 from evo.core.trajectory import PoseTrajectory3D
 
@@ -121,6 +130,9 @@ def run_voxel(voxeldir, cfg, network, viz=False, iterator=None, timing=False, H=
             # plt.switch_backend('Qt5Agg')
             visualize_voxel(voxel.detach().cpu())
         
+        # Debug print for voxel size
+        print(f"Voxel size: {voxel.size()}")
+
         with Timer("DEVO", enabled=timing):
             slam(t, voxel, intrinsics, scale=scale)
 
