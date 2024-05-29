@@ -19,8 +19,9 @@ from devo_utils.viz_utils import viz_flow_inference
 H, W = 720, 1280
 
 @torch.no_grad()
-def evaluate(config, args, net, train_step=None, datapath="", split_file=None,
-             stride=1, trials=1, plot=False, save=False, return_figure=False, viz=False, camID=2, timing=False, outdir=None, viz_flow=False):
+@torch.no_grad()
+def evaluate(config, args, net, train_step=None, datapath="", split_file=None, stride=1, trials=1, plot=False, save=False, return_figure=False, viz=False, camID=2, timing=False, outdir=None, viz_flow=False):
+    print("Starting evaluation...")
     dataset_name = "uw"
     assert camID == 2 or camID == 3
     assert H == 720 and W == 1280, "Resizing option not implemented yet (might be needed only later to train&eval quickly on TUMVIE due to large resolution)"
@@ -29,43 +30,42 @@ def evaluate(config, args, net, train_step=None, datapath="", split_file=None,
         config = cfg
         config.merge_from_file("config/default.yaml")
         config.__setattr__('camID', camID)
-        
+    
     scenes = open(split_file).read().split()
     scenes = [s for s in scenes if '#' not in s]
 
     results_dict_scene, figures = {}, {}
     all_results = []
-    for i, scene in enumerate(scenes):
-        print(f"Eval on {scene}")
+    for scene in scenes:
+        print(f"Processing scene: {scene}")
         results_dict_scene[scene] = []
-
         for trial in range(trials):
+            print(f"  Trial {trial + 1}/{trials}")
             datapath_val = os.path.join(datapath, scene)
             traj_hf_path = os.path.join(datapath_val, "mocap_data.txt")
 
             traj_est, tstamps, flowdata = run_voxel(datapath_val, config, net, viz=viz, 
-                                          iterator=uw_evs_iterator(datapath_val, camID=camID, stride=stride, timing=timing, dT_ms=25, H=H, W=W), 
-                                          timing=timing, H=H, W=W, viz_flow=viz_flow)
+                                       iterator=uw_evs_iterator(datapath_val, camID=camID, stride=stride, timing=timing, dT_ms=25, H=H, W=W), 
+                                       timing=timing, H=H, W=W, viz_flow=viz_flow)
 
             tss_traj_us, traj_hf = load_tumvie_traj(traj_hf_path)
- 
             data = (traj_hf, tss_traj_us, traj_est, tstamps)
             hyperparam = (train_step, net, dataset_name, scene, trial, cfg, args)
             all_results, results_dict_scene, figures, outfolder = log_results(data, hyperparam, all_results, results_dict_scene, figures, 
-                                                                   plot=plot, save=save, return_figure=return_figure, stride=stride, camID_tumvie=camID, outdir=outdir,
-                                                                   expname=args.expname)
+                                                                plot=plot, save=save, return_figure=return_figure, stride=stride, camID_tumvie=camID, outdir=outdir, expname=args.expname)
             
             if viz_flow:
                 viz_flow_inference(outfolder, flowdata)
-            
+        
         print(scene, sorted(results_dict_scene[scene]))
 
     write_raw_results(all_results, outfolder)
     results_dict = compute_median_results(results_dict_scene, all_results, dataset_name, outfolder)
-        
+    
     if return_figure:
         return results_dict, figures
     return results_dict, None
+
 
 if __name__ == '__main__':
     import argparse

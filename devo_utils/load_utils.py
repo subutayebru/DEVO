@@ -17,8 +17,8 @@ import sys
 import torchvision
 
 current = os.path.dirname(os.path.realpath(__file__))
-parentt = os.path.dirname(current)
-parent = os.path.dirname(parentt)
+#parentt = os.path.dirname(current)
+parent = os.path.dirname(current)
 sys.path.append(parent)
 
 from devo_utils.event_utils import EventSlicer, to_voxel_grid, RemoveHotPixelsVoxel
@@ -75,12 +75,12 @@ def read_batch_as_voxel(evs_slicer, t0_us, t1_us, rectify_map, trafos, Horig, Wo
     
     # Check if the events are empty
     if len(ev_batch["t"]) == 0:
-        logging.warning(f"Empty events: len(ev_batch['x'])={len(ev_batch['x'])}, len(ev_batch['y'])={len(ev_batch['y'])}, len(ev_batch['t'])={len(ev_batch['t'])}, len(ev_batch['p'])={len(ev_batch['p'])}")
+        #logging.warning(f"Empty events: len(ev_batch['x'])={len(ev_batch['x'])}, len(ev_batch['y'])={len(ev_batch['y'])}, len(ev_batch['t'])={len(ev_batch['t'])}, len(ev_batch['p'])={len(ev_batch['p'])}")
         return None
     
     # Ensure rectify_map is not None and has valid dimensions
     if rectify_map is None:
-        logging.error("rectify_map is None")
+        #logging.error("rectify_map is None")
         return None
     
     if not (isinstance(ev_batch["y"], list) and isinstance(ev_batch["x"], list)):
@@ -114,7 +114,7 @@ def get_real_data_list(evs_slicer, tss_imgs_us, intrinsics, rectify_map, trafos,
 
         voxel = read_batch_as_voxel(evs_slicer, t0_us, t1_us, rectify_map, trafos, Horig, Worig)
         if voxel is None:
-            print(f"Found no events in {(t0_us)/1e6:.3f}secs to {(t1_us)/1e6:.3f}secs at frame-idx {i}.jpg")
+            #print(f"Found no events in {(t0_us)/1e6:.3f}secs to {(t1_us)/1e6:.3f}secs at frame-idx {i}.jpg")
             continue
 
         intrinsics = torch.as_tensor(intrinsics).clone()
@@ -128,6 +128,7 @@ def get_real_data_list_parallel(evs_slicer, tss_imgs_us, intrinsics, rectify_map
 
 
 def uw_evs_iterator(scenedir, camID=2, stride=1, rectify_map=None, H=720, W=1280, dT_ms=None, timing=False, parallel=False, cors=16):
+    print(f"Initializing UW EVS iterator for {scenedir} with camID {camID}...")
     assert camID == 2 or camID == 3
     side = "left" if camID == 2 else "right"
     
@@ -153,13 +154,20 @@ def uw_evs_iterator(scenedir, camID=2, stride=1, rectify_map=None, H=720, W=1280
     evs = h5py.File(h5file, "r")
     evs_slicer = EventSlicer(evs)
 
-    # Load timestamps
+    """
+    tss_imgs_us = sorted(np.loadtxt(os.path.join(scenedir, f"{side}_images_undistorted", f"image_timestamps_{side}.txt")))
+    if dT_ms is None:
+        dT_ms = np.diff(tss_imgs_us).mean()/1e3   
+    assert dT_ms > 3 and dT_ms < 100
+    tss_imgs_us = tss_imgs_us[::stride]
+    """
+
     tss_imgs_us = sorted(evs['events/t'][:])
     if dT_ms is None:
-        dT_ms = np.diff(tss_imgs_us).mean() / 1e3
-    assert 3 < dT_ms < 100
+        dT_ms = np.diff(tss_imgs_us).mean()/1e3   
+    assert dT_ms > 3 and dT_ms < 100
     tss_imgs_us = tss_imgs_us[::stride]
-
+    
     trafos = []
     if H != 720 or W != 1280:
         resize = torchvision.transforms.Resize((H, W))
@@ -211,8 +219,8 @@ def uw_evs_iterator(scenedir, camID=2, stride=1, rectify_map=None, H=720, W=1280
     if timing:  
         t1.record()
         torch.cuda.synchronize()
-        dt = t0.elapsed_time(t1) / 1e3
-        print(f"Preloaded {len(data_list)} TUMVIE voxels in {dt} secs, e.g. {len(data_list) / dt} FPS")
+        dt = t0.elapsed_time(t1)/1e3
+        print(f"Preloaded {len(data_list)} TUMVIE voxels in {dt} secs, e.g. {len(data_list)/dt} FPS")
     print(f"Preloaded {len(data_list)} TUMVIE voxels, imstart={0}, imstop={-1}, stride={stride}, dT_ms={dT_ms} on {scenedir}")
 
     evs.close()

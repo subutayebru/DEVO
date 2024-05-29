@@ -120,17 +120,18 @@ def run_voxel(voxeldir, cfg, network, viz=False, iterator=None, timing=False, H=
     slam = DEVO(cfg, network, evs=True, ht=H, wd=W, viz=viz, viz_flow=viz_flow, **kwargs)
     
     for i, (voxel, intrinsics, t) in enumerate(iterator):
+        if voxel is None:
+            print(f"No events found in the interval {t}")
+            continue
+        
         if timing and i == 0:
             t0 = torch.cuda.Event(enable_timing=True)
             t1 = torch.cuda.Event(enable_timing=True)
             t0.record()
 
-        if viz: 
-            # import matplotlib.pyplot as plt
-            # plt.switch_backend('Qt5Agg')
+        if viz:
             visualize_voxel(voxel.detach().cpu())
         
-        # Debug print for voxel size
         print(f"Voxel size: {voxel.size()}")
 
         with Timer("DEVO", enabled=timing):
