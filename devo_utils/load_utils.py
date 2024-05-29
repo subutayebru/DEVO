@@ -108,18 +108,19 @@ def read_batch_as_voxel(evs_slicer, t0_us, t1_us, rectify_map, trafos, Horig, Wo
 
 
 def get_real_data_list(evs_slicer, tss_imgs_us, intrinsics, rectify_map, trafos, dT_ms, Horig, Worig):
+    print("Generating real data list...")
     data_list = []
     for i, ts_us in enumerate(tss_imgs_us): 
         t0_us, t1_us = ts_us, ts_us + dT_ms*1e3
-
+        #print(f"  Processing timestamp range: {t0_us} to {t1_us}")
         voxel = read_batch_as_voxel(evs_slicer, t0_us, t1_us, rectify_map, trafos, Horig, Worig)
         if voxel is None:
-            #print(f"Found no events in {(t0_us)/1e6:.3f}secs to {(t1_us)/1e6:.3f}secs at frame-idx {i}.jpg")
+            #print(f"  No voxel data found for range: {t0_us} to {t1_us}")
             continue
-
         intrinsics = torch.as_tensor(intrinsics).clone()
         data_list.append((voxel, intrinsics, (t0_us+t1_us)/2))
     return data_list
+
 
 
 def get_real_data_list_parallel(evs_slicer, tss_imgs_us, intrinsics, rectify_map, trafos, dT_ms, Horig, Worig, return_dict):
@@ -703,20 +704,6 @@ def video_iterator_parallel(imagedir, tss_file=None, ext=".png", intrinsics=[320
 
     for (image, intrinsics, ts_us) in data_list:
         yield image.cuda(), intrinsics.cuda(), ts_us
-
-
-def load_mvsec_traj(scenedir, side="left"):
-    from utils.pose_utils import poses_hom_to_quatlist
-    gt_fname = os.path.join(scenedir, scenedir[:-5].split("/")[-1]+"_gt.hdf5")
-    datain = h5py.File(gt_fname, 'r')
-
-    traj_hf = datain["davis"][side]["pose"][:] # (N, 4, 4)
-    traj_hf = poses_hom_to_quatlist(traj_hf) # (N, 7)
-    tss_traj_us = datain["davis"][side]["pose_ts"][:].astype(np.float64)*1e6 # (N,)
-
-    datain.close()
-
-    return np.array(tss_traj_us.tolist()), np.array(traj_hf)
 
 def load_eds_traj(path):
     traj_ref = np.loadtxt(path, delimiter=" ", skiprows=1)
