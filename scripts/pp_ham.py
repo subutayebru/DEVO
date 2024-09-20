@@ -11,6 +11,8 @@ import json
 from utils.viz_utils import render
 from utils.event_utils import EventSlicer, compute_ms_to_idx
 
+W = 640
+H = 480
 
 def process_seq_eds(indirs, calibstr="calib0"):
     for indir in indirs:
@@ -26,51 +28,34 @@ def process_seq_eds(indirs, calibstr="calib0"):
 
         img_list = sorted(os.listdir(os.path.join(indir, imgdir)))
         img_list = [os.path.join(indir, imgdir, im) for im in img_list if im.endswith(".png")]
-        H, W, _ = cv2.imread(img_list[0]).shape
-        assert W == 1280
-        assert H == 800
+        H_rgb, W_rgb, _ = cv2.imread(img_list[0]).shape
 
         # 1) Getting offset which is substracted from evs, mocap and images.
         ef_in = h5py.File(os.path.join(indir, evinfile), "r+")
         tss_evs_us = ef_in["t"][:]
         gt_us = np.loadtxt(os.path.join(indir, "stamped_groundtruth.txt"))
-        tss_gt_us = gt_us[:, 0] * 1e16
+        tss_gt_us = gt_us[:, 0]
         tss_imgs_us = np.loadtxt(os.path.join(indir, "images_timestamps.txt"), skiprows=0)
-        
+        print(f'min event time stamp', tss_evs_us.min())
+        print(f'min gt time stamp', tss_gt_us.min())
+        print(f'min imgs time stamp', tss_imgs_us.min())
+
         if not os.path.isfile(os.path.join(indir, "t_offset_us.txt")):
             offset_us = np.minimum(tss_evs_us.min(), np.minimum(tss_gt_us.min(), tss_imgs_us.min())).astype(np.int64)
-                    # Keep looking for a non-zero offset
-            while offset_us == 0:
-                print("offset_us is 0, searching for the next minimum value.")
-                
-                # Remove the minimum value and re-calculate the minimum for the next iteration
-                tss_evs_us = tss_evs_us[tss_evs_us > offset_us]  # Filter out 0 or min values
-                tss_gt_us = tss_gt_us[tss_gt_us > offset_us]
-                tss_imgs_us = tss_imgs_us[tss_imgs_us > offset_us]
-                
-                # Recompute the offset_us
-                if len(tss_evs_us) == 0 or len(tss_gt_us) == 0 or len(tss_imgs_us) == 0:
-                    print("No valid non-zero offset found, skipping.")
-                    break  # Break if no valid offset is found
+            print(f"Minimum/offset_us is {offset_us}. tss_evs_us.min() = {tss_evs_us.min()-offset_us},  tss_gt_us.min() = {tss_gt_us.min()-offset_us}, tss_imgs_us.min() = {tss_imgs_us.min()-offset_us}")
+            assert offset_us != 0 
+            assert offset_us > 0
 
-                offset_us = np.minimum(tss_evs_us.min(), np.minimum(tss_gt_us.min(), tss_imgs_us.min())).astype(np.int64)
+            tss_gt_us -= offset_us
+            gt_us[:, 0] = tss_gt_us
+            np.savetxt(os.path.join(indir, "stamped_groundtruth_us.txt"), gt_us, header="#timestamp[us] px py pz qx qy qz qw")
 
-            # Proceed with processing if a non-zero offset is found
-            if offset_us > 0:
-                print(f"Valid offset_us found: {offset_us}")
-                print(f"Minimum/offset_us is {offset_us}. tss_evs_us.min() = {tss_evs_us.min()-offset_us},  tss_gt_us.min() = {tss_gt_us.min()-offset_us}, tss_imgs_us.min() = {tss_imgs_us.min()-offset_us}")
+            tss_imgs_us -= offset_us
+            np.savetxt(os.path.join(indir, "images_timestamps_us.txt"), tss_imgs_us, fmt="%d")
 
-                tss_gt_us -= offset_us
-                gt_us[:, 0] = tss_gt_us
-                np.savetxt(os.path.join(indir, "stamped_groundtruth_us.txt"), gt_us, header="#timestamp[us] px py pz qx qy qz qw")
-
-                tss_imgs_us -= offset_us
-                print("tss_imgs", tss_imgs_us)
-                np.savetxt(os.path.join(indir, "images_timestamps_us.txt"), tss_imgs_us, fmt="%d")
-
-                ef_in["t"][:] -= offset_us
-                tss_evs_us -= offset_us
-                np.savetxt(os.path.join(indir, "t_offset_us.txt"), np.array([offset_us]))
+            ef_in["t"][:] -= offset_us
+            tss_evs_us -= offset_us
+            np.savetxt(os.path.join(indir, "t_offset_us.txt"), np.array([offset_us]))
         else:
             assert ef_in["t"][0] < 5000
 
@@ -123,7 +108,8 @@ def process_seq_eds(indirs, calibstr="calib0"):
             calibdata = {}
             calibdata["intrinsics_undistorted"] = intr_undist
             json.dump(calibdata, f)
-    
+
+        """
         # 2) undistorting images
         print("Undistorting images")
         pbar = tqdm.tqdm(total=len(img_list))
@@ -136,6 +122,7 @@ def process_seq_eds(indirs, calibstr="calib0"):
             # cv2.imwrite(os.path.join(imgdirout,  os.path.split(f)[1][:-4] + "_undist.jpg"),  image)
         # shutil.copy(os.path.join(imgdir, "timestamps.txt"), os.path.join(imgdirout, "timestamps.txt"))
         # sys.exit()
+        """
 
         # 3) undistorting events => visualize
         coords = np.stack(np.meshgrid(np.arange(W), np.arange(H))).reshape((2, -1)).astype("float32")
@@ -144,21 +131,12 @@ def process_seq_eds(indirs, calibstr="calib0"):
         rectify_map = points.reshape((H, W, 2))
 
         # 4) Create rectify map for events
-        try:
-            h5outfile = os.path.join(indir, f"rectify_map_{calibstr}.h5")
-            print(f"Attempting to create rectify map file: {h5outfile}")
-            ef_out = h5py.File(h5outfile, 'w')
-            ef_out.clear()
-            ef_out.create_dataset('rectify_map', shape=(H, W, 2), dtype="<f4")
-            ef_out["rectify_map"][:] = rectify_map
-            ef_out.close()
-            print(f"Successfully created and wrote to {h5outfile}")
-        except Exception as e:
-            print(f"Error creating or writing to {h5outfile}: {str(e)}")
-        print(f"rectify_map shape: {rectify_map.shape}")
-        print(f"rectify_map dtype: {rectify_map.dtype}")
-        print(f"rectify_map min: {np.min(rectify_map)}, max: {np.max(rectify_map)}")
-        print(f"rectify_map min: {rectify_map[0]}")
+        h5outfile = os.path.join(indir, f"rectify_map_{calibstr}.h5")
+        ef_out = h5py.File(h5outfile, 'w')
+        ef_out.clear()
+        ef_out.create_dataset('rectify_map', shape=(H, W, 2), dtype="<f4")
+        ef_out["rectify_map"][:] = rectify_map
+        ef_out.close()
 
         # 5) Computing ms_to_idx
         tss_evs_ns = tss_evs_us * 1000
@@ -233,17 +211,15 @@ def process_seq_eds(indirs, calibstr="calib0"):
 
         ef_in.close()
 
-        print(f"Finished processing {indir}\n\n")
+        print(f"Finshied processing {indir}\n\n")
   
     
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="PP HAM data in dir")
+    parser = argparse.ArgumentParser(description="PP EDS data in dir")
     parser.add_argument(
         "--indir", help="Input image directory.", default=""
     )
     args = parser.parse_args()
-
-    print(f"Searching for data in: {args.indir}")
 
     roots = []
     for root, dirs, files in os.walk(args.indir):
@@ -252,23 +228,15 @@ if __name__ == "__main__":
                 if root not in roots:
                     roots.append(root)
 
-    print(f"Found {len(roots)} directories to process")
-
-    if not roots:
-        print("No valid directories found. Check your input directory.")
-        exit(1)
-
+    
     cors = 4
     roots_split = np.array_split(roots, cors)
 
     processes = []
     for i in range(cors):
-        print(f"Starting process {i+1} with {len(roots_split[i])} directories")
         p = multiprocessing.Process(target=process_seq_eds, args=(roots_split[i].tolist(),))
         p.start()
         processes.append(p)
         
     for p in processes:
         p.join()
-
-    print("All processes completed")

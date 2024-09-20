@@ -1,20 +1,19 @@
 import os
 import torch
+from pathlib import Path
 from devo.config import cfg
 
-from utils.load_utils import load_ham_traj, ham_evs_iterator
+from utils.load_utils import load_eds_traj, eds_evs_iterator
 from utils.eval_utils import assert_eval_config, run_voxel
 from utils.eval_utils import log_results, write_raw_results, compute_median_results
 from utils.viz_utils import viz_flow_inference
 
-from devo.plot_utils import save_trajectory_tum_format
-
-H, W = 800, 1280
+H, W = 480, 640
 
 @torch.no_grad()
 def evaluate(config, args, net, train_step=None, datapath="", split_file=None, 
              trials=1, stride=1, plot=False, save=False, return_figure=False, viz=False, calib1=False, timing=False, viz_flow=False):
-    dataset_name = "circles_darker"
+    dataset_name = "ham_evs"
 
     if config is None:
         config = cfg
@@ -36,20 +35,20 @@ def evaluate(config, args, net, train_step=None, datapath="", split_file=None,
 
             # run the slam system
             traj_est, tstamps, flowdata = run_voxel(datapath_val, config, net, viz=viz, 
-                                          iterator=ham_evs_iterator(datapath_val, calib1=calib1, stride=stride, timing=timing, H=H, W=W),
+                                          iterator=eds_evs_iterator(datapath_val, calib1=calib1, stride=stride, timing=timing, H=H, W=W),
                                           timing=timing, H=H, W=W, viz_flow=viz_flow)
-            # save estimated trajectory
-            Path(f"{outfolder}").mkdir(exist_ok=True)
-            save_trajectory_tum_format((traj_est, tstamps), f"{outfolder}/{scene}_Trial{trial+1:02d}.txt")
             
+            outfolder = f"results/{scene}"
+            Path(f"{outfolder}").mkdir(exist_ok=True)
+
             # load traj
-            tss_traj_us, traj_hf = load_ham_traj(traj_hf_path)
+            tss_traj_us, traj_hf = load_eds_traj(traj_hf_path)
 
             # do evaluation 
             data = (traj_hf, tss_traj_us, traj_est, tstamps)
             hyperparam = (train_step, net, dataset_name, scene, trial, cfg, args)
             all_results, results_dict_scene, figures, outfolder = log_results(data, hyperparam, all_results, results_dict_scene, figures, 
-                                                                   plot=plot, save=save, return_figure=return_figure, stride=stride, calib1_ham=calib1,
+                                                                   plot=plot, save=save, return_figure=return_figure, stride=stride, calib1_eds=calib1,
                                                                    expname=args.expname)
             
             if viz_flow:
@@ -69,11 +68,11 @@ def evaluate(config, args, net, train_step=None, datapath="", split_file=None,
 if __name__ == '__main__': 
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('--config', default="config/eval_ham.yaml")
+    parser.add_argument('--config', default="config/eval_eds.yaml")
     parser.add_argument('--datapath', default='', help='path to dataset directory')
     parser.add_argument('--weights', default="DEVO.pth")
     parser.add_argument('--val_split', type=str, default="splits/ham/ham_val.txt")
-    parser.add_argument('--trials', type=int, default=1)
+    parser.add_argument('--trials', type=int, default=5)
     parser.add_argument('--plot', action="store_true")
     parser.add_argument('--save_trajectory', action="store_true")
     parser.add_argument('--return_figs', action="store_true")
@@ -93,6 +92,9 @@ if __name__ == '__main__':
 
     torch.manual_seed(1234)
 
+    args.save_trajectory = True
+    args.plot = True
+    
     val_results, val_figures = evaluate(cfg, args, args.weights, datapath=args.datapath, split_file=args.val_split, trials=args.trials, \
                        plot=args.plot, save=args.save_trajectory, return_figure=args.return_figs, viz=args.viz, calib1=args.calib1, \
                         timing=args.timing, stride=args.stride, viz_flow=args.viz_flow)
