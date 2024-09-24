@@ -36,7 +36,10 @@ def process_seq_eds(indirs, calibstr="calib0"):
         gt_us = np.loadtxt(os.path.join(indir, "stamped_groundtruth.txt"))
         tss_gt_us = gt_us[:, 0] * 1e6
         tss_imgs_us = np.loadtxt(os.path.join(indir, "images_timestamps.txt"), skiprows=0)
-        
+        print(f'min event time stamp', tss_evs_us.min())
+        print(f'min gt time stamp', tss_gt_us.min())
+        print(f'min imgs time stamp', tss_imgs_us.min())
+
         if not os.path.isfile(os.path.join(indir, "t_offset_us.txt")):
             offset_us = np.minimum(tss_evs_us.min(), np.minimum(tss_gt_us.min(), tss_imgs_us.min())).astype(np.int64)
             print(f"Minimum/offset_us is {offset_us}. tss_evs_us.min() = {tss_evs_us.min()-offset_us},  tss_gt_us.min() = {tss_gt_us.min()-offset_us}, tss_imgs_us.min() = {tss_imgs_us.min()-offset_us}")
@@ -106,6 +109,7 @@ def process_seq_eds(indirs, calibstr="calib0"):
             calibdata["intrinsics_undistorted"] = intr_undist
             json.dump(calibdata, f)
 
+        """
         # 2) undistorting images
         print("Undistorting images")
         pbar = tqdm.tqdm(total=len(img_list))
@@ -118,6 +122,7 @@ def process_seq_eds(indirs, calibstr="calib0"):
             # cv2.imwrite(os.path.join(imgdirout,  os.path.split(f)[1][:-4] + "_undist.jpg"),  image)
         # shutil.copy(os.path.join(imgdir, "timestamps.txt"), os.path.join(imgdirout, "timestamps.txt"))
         # sys.exit()
+        """
 
         # 3) undistorting events => visualize
         coords = np.stack(np.meshgrid(np.arange(W), np.arange(H))).reshape((2, -1)).astype("float32")

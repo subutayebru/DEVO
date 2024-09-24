@@ -3,7 +3,7 @@ import torch
 from pathlib import Path
 from devo.config import cfg
 
-from utils.load_utils import load_eds_traj, eds_evs_iterator
+from utils.load_utils import load_eds_traj, ham_evs_iterator
 from utils.eval_utils import assert_eval_config, run_voxel
 from utils.eval_utils import log_results, write_raw_results, compute_median_results
 from utils.viz_utils import viz_flow_inference
@@ -35,7 +35,7 @@ def evaluate(config, args, net, train_step=None, datapath="", split_file=None,
 
             # run the slam system
             traj_est, tstamps, flowdata = run_voxel(datapath_val, config, net, viz=viz, 
-                                          iterator=eds_evs_iterator(datapath_val, calib1=calib1, stride=stride, timing=timing, H=H, W=W),
+                                          iterator=ham_evs_iterator(datapath_val, calib1=calib1, stride=stride, timing=timing, H=H, W=W),
                                           timing=timing, H=H, W=W, viz_flow=viz_flow)
             
             outfolder = f"results/{scene}"

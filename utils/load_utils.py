@@ -260,6 +260,85 @@ def eds_evs_iterator(scenedir, calib1=False, stride=1, timing=False, H=480, W=64
     for (voxel, intrinsics, ts_us) in data_list:
         yield voxel.cuda(), intrinsics.cuda(), ts_us
 
+def ham_evs_iterator(scenedir, calib1=False, stride=1, timing=False, H=480, W=640, parallel=False, cors=16):
+    if timing:
+        t0 = torch.cuda.Event(enable_timing=True)
+        t1 = torch.cuda.Event(enable_timing=True)
+        t0.record()
+    
+    intrinsics = load_intrinsics_eds(calib1=calib1)
+    rectify_map = load_rmap_eds(scenedir, calib1=calib1)
+
+    h5file = glob.glob(osp.join(scenedir, "events.h5"))[0]
+    evs = h5py.File(h5file, "r") # x, y, t, p
+    evs_slicer = EventSlicer(evs)
+
+    tss_imgs_us = sorted(np.loadtxt(os.path.join(scenedir, "images_timestamps_us.txt")))
+    dT_ms = np.diff(tss_imgs_us).mean()/2e3
+    # if "02_rocket_earth_light" in scenedir:
+    #     dT_ms = 2.0*dT_ms
+    print(f"Mean dT_ms: {dT_ms}")
+    # assert dT_ms > 3 and dT_ms < 60
+    # assert abs(tss_imgs_us[0] - (evs["t"][0])) < 3e6 
+    # assert abs(tss_imgs_us[-1] - (evs["t"][-1])) < 3e6
+    imstart, imstop = 0, -1
+    tss_imgs_us = tss_imgs_us[imstart:imstop:stride]
+
+    trafos = []
+    if H != 480 or W != 640:
+        resize = torchvision.transforms.Resize((H, W))
+        print(f"Warning: Resizing HAM voxels to ({H}, {W}). Visualize and check")
+        intrinsics = change_intrinsics_resize(intrinsics, H, W, Horig=480, Worig=640)
+    else:
+        resize = lambda x: x
+    trafos.append(resize)
+
+    hotpixfilter = True
+    if hotpixfilter:
+        trafos.append(RemoveHotPixelsVoxel(num_stds=10))
+
+    if not parallel:
+        data_list = get_real_data_list(evs_slicer, tss_imgs_us, intrinsics, rectify_map, trafos, dT_ms, Horig=480, Worig=640)
+    else:
+        tss_imgs_us_split = np.array_split(tss_imgs_us, cors)
+        processes = []
+        return_dict = multiprocessing.Manager().dict()
+        for i in range(cors):
+            p = multiprocessing.Process(target=get_real_data_list_parallel, args=(evs_slicer, tss_imgs_us_split[i].tolist(), intrinsics, rectify_map, trafos, dT_ms, 480, 640, return_dict))
+            p.start()
+            processes.append(p)
+            
+        for p in processes:
+            p.join()
+        
+        if timing:
+            t0sort = torch.cuda.Event(enable_timing=True)
+            t1sort = torch.cuda.Event(enable_timing=True)
+            t0sort.record()
+
+        keys = np.array(return_dict.keys())
+        order = np.argsort(keys)
+        data_list = []
+        for k in keys[order]:
+            data_list.extend(return_dict[k])
+
+        if timing:
+            t1sort.record()
+            torch.cuda.synchronize()
+            print(f"Sorted {len(data_list)} HAM voxels in {t0sort.elapsed_time(t1sort)/1e3} secs")
+
+    evs.close()
+
+    if timing:  
+        t1.record()
+        torch.cuda.synchronize()
+        dt = t0.elapsed_time(t1)/1e3
+        print(f"Preloaded {len(data_list)} HAM voxels in {dt} secs, e.g. {len(data_list)/dt} FPS")
+    print(f"Preloaded {len(data_list)} HAM voxels, imstart={imstart}, imstop={imstop}, stride={stride}, dT_ms={dT_ms} on {scenedir}")
+
+    for (voxel, intrinsics, ts_us) in data_list:
+        yield voxel.cuda(), intrinsics.cuda(), ts_us
+
 def eds_evs_loader(scenedir, calib1=False, stride=1, H=480, W=640, parallel=False, cors=16, timing=False):    
     intrinsics = load_intrinsics_eds(calib1=calib1)
     rectify_map = load_rmap_eds(scenedir, calib1=calib1)
@@ -280,7 +359,7 @@ def eds_evs_loader(scenedir, calib1=False, stride=1, H=480, W=640, parallel=Fals
     trafos = []
     if H != 480 or W != 640:
         resize = torchvision.transforms.Resize((H, W))
-        print(f"Warning: Resizing EDS voxels to ({H}, {W}). Visualize and check")
+        print(f"Warning: Resizing HAM voxels to ({H}, {W}). Visualize and check")
         intrinsics = change_intrinsics_resize(intrinsics, H, W, Horig=480, Worig=640)
     else:
         resize = lambda x: x
@@ -316,7 +395,7 @@ def eds_evs_loader(scenedir, calib1=False, stride=1, H=480, W=640, parallel=Fals
             data_list.extend(return_dict[k])
 
     evs.close()
-    print(f"Preloaded {len(data_list)} EDS voxels, imstart={imstart}, imstop={imstop}, stride={stride}, dT_ms={dT_ms} on {scenedir}")
+    print(f"Preloaded {len(data_list)} HAM voxels, imstart={imstart}, imstop={imstop}, stride={stride}, dT_ms={dT_ms} on {scenedir}")
 
     return data_list
 

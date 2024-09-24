@@ -88,6 +88,8 @@ if __name__ == '__main__':
 
     torch.manual_seed(1234)
 
+    args.save_trajectory = True
+    args.plot = True
     val_results, val_figures = evaluate(cfg, args, args.weights, datapath=args.datapath, split_file=args.val_split, trials=args.trials, \
                        plot=args.plot, save=args.save_trajectory, return_figure=args.return_figs, viz=args.viz, calib1=args.calib1, \
                         timing=args.timing, stride=args.stride, viz_flow=args.viz_flow)
