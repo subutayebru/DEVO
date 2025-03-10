@@ -84,19 +84,19 @@ def process_seq_eds(indirs, calibstr="calib0"):
 
         K_evs = np.zeros((3,3))
         if calibstr == "calib1":
-            K_evs[0,0] = 684.3806 ##### March 11
-            K_evs[0,2] = 323.6513
-            K_evs[1,1] = 683.5350
-            K_evs[1,2] = 240.4423
+            K_evs[0,0] = 548.8989250692618 ##### calib1 
+            K_evs[0,2] = 313.5293514832678
+            K_evs[1,1] = 550.0282089284915
+            K_evs[1,2] = 219.6325753720951
             K_evs[2, 2] = 1
-            dist_coeffs_evs = np.asarray([-0.3404, 0.1875, -0.0015, 0.0004, -0.1231 ])
+            dist_coeffs_evs = np.asarray([-0.08095806072593555, 0.15743578875760092, -0.0035154416164982195, -0.003950567808338846])
         elif calibstr == "calib0":
-            K_evs[0,0] = 684.3806 ##### March 11
-            K_evs[0,2] = 323.6513
-            K_evs[1,1] = 683.5350
-            K_evs[1,2] = 240.4423
+            K_evs[0,0] = 560.8520948927032 ##### calib0 
+            K_evs[0,2] = 313.00733235019237
+            K_evs[1,1] = 560.6295819972383
+            K_evs[1,2] = 217.32858679842997
             K_evs[2, 2] = 1
-            dist_coeffs_evs = np.asarray([-0.3404, 0.1875, -0.0015, 0.0004, -0.1231 ])
+            dist_coeffs_evs = np.asarray([-0.09776467241921379, 0.2143738428636279, -0.004710710105172864, -0.004215916089401789])
         
         K_new_evs, roi = cv2.getOptimalNewCameraMatrix(K_evs, dist_coeffs_evs, (W, H), alpha=0, newImgSize=(W, H))
         x,y,w,h = roi
@@ -109,7 +109,7 @@ def process_seq_eds(indirs, calibstr="calib0"):
             calibdata["intrinsics_undistorted"] = intr_undist
             json.dump(calibdata, f)
 
-        """
+        
         # 2) undistorting images
         print("Undistorting images")
         pbar = tqdm.tqdm(total=len(img_list))
@@ -122,7 +122,7 @@ def process_seq_eds(indirs, calibstr="calib0"):
             # cv2.imwrite(os.path.join(imgdirout,  os.path.split(f)[1][:-4] + "_undist.jpg"),  image)
         # shutil.copy(os.path.join(imgdir, "timestamps.txt"), os.path.join(imgdirout, "timestamps.txt"))
         # sys.exit()
-        """
+        
 
         # 3) undistorting events => visualize
         coords = np.stack(np.meshgrid(np.arange(W), np.arange(H))).reshape((2, -1)).astype("float32")
@@ -142,11 +142,13 @@ def process_seq_eds(indirs, calibstr="calib0"):
         tss_evs_ns = tss_evs_us * 1000
         if "ms_to_idx" not in ef_in.keys():
             print(f"Start computing ms_to_idx, with {len(tss_evs_ns)} tss_evs_ns, {tss_evs_ns}, ms_start={ef_in['t'][0]}")
-            ms_to_idx = compute_ms_to_idx(tss_evs_ns)
+            tss_evs_ns_sorted = np.sort(tss_evs_ns)
+            ms_to_idx = compute_ms_to_idx(tss_evs_ns_sorted)
             print(f"Done computing ms_to_idx")
             ef_in.create_dataset('ms_to_idx', shape=len(ms_to_idx), dtype="<u8")
             ef_in["ms_to_idx"][:] = ms_to_idx
-
+            
+        
         # 6) Visualization from here on (undistorted evs)
         outvizfolder = os.path.join(indir, f"evs_rgb_joint_{calibstr}")
         os.makedirs(outvizfolder, exist_ok=True)
@@ -176,12 +178,12 @@ def process_seq_eds(indirs, calibstr="calib0"):
         # Computing joint recitificaiton
         K_joint = K_evs # (K_evs + K_rgb) / 2.
         newR = T_ev_rgb[:3, :3]
-        img_mapx, img_mapy = cv2.initUndistortRectifyMap(K_rgb, dist_coeffs_rgb, newR, K_joint, (W, H), cv2.CV_32FC1)
+        img_mapx, img_mapy = cv2.initUndistortRectifyMap(K_rgb, dist_coeffs_rgb, np.eye(3), K_joint, (W, H), cv2.CV_32FC1)
         ev_mapx, ev_mapy = cv2.initUndistortRectifyMap(K_evs, dist_coeffs_evs, np.eye(3), K_joint, (W, H), cv2.CV_32FC1)
 
         tss_img_us = np.loadtxt(os.path.join(indir, "images_timestamps_us.txt"))
-        assert len(tss_imgs_us) == len(img_list)
-        assert len(tss_img_us) == len(tss_imgs_us) # bug checker
+        #assert len(tss_imgs_us) == len(img_list)
+        #assert len(tss_img_us) == len(tss_imgs_us) # bug checker
         dT_ms_trigger_period = np.diff(tss_imgs_us).mean()/1e3
         print(f"Visualizing undistorted {len(tss_img_us)} event slices around images (with aligned optical axis)")
         pbar = tqdm.tqdm(total=len(tss_img_us)-1)
@@ -190,11 +192,12 @@ def process_seq_eds(indirs, calibstr="calib0"):
             # img = cv2.undistort(image, K_rgb, dist_coeffs_rgb, newCameraMatrix=K_joint)
             image =  cv2.imread(img_list[i])
             img = cv2.remap(image, img_mapx, img_mapy, cv2.INTER_CUBIC)
-            cv2.imwrite(os.path.join(outvizfolder, "%06d_a" % i + ".png"), img)
+            #cv2.imwrite(os.path.join(outvizfolder, "%06d_a" % i + ".png"), img)
 
             start_time_us = tss_img_us[i] - 1e3 * dT_ms_trigger_period / 2.
             end_time_us = start_time_us + 1e3 * dT_ms_trigger_period / 2.
             ev_batch = event_slicer.get_events(start_time_us, end_time_us)
+            #print(ev_batch)
             if ev_batch is None:
                 print(f"Got no events in {start_time_us/1e3} ms to {end_time_us/1e3} ms")
                 continue
@@ -208,11 +211,11 @@ def process_seq_eds(indirs, calibstr="calib0"):
             img = render(x_rect, y_rect, p, H, W)
             cv2.imwrite(os.path.join(outvizfolder,  "%06d_undist" % i + ".png"), img)
             pbar.update(1)
-
+	
         ef_in.close()
 
-        print(f"Finshied processing {indir}\n\n")
-  
+        print(f"Finished processing {indir}\n\n")
+        
     
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="PP EDS data in dir")
@@ -240,3 +243,4 @@ if __name__ == "__main__":
         
     for p in processes:
         p.join()
+
