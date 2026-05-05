@@ -1,6 +1,8 @@
-# Un-ignore the tests directory blocked by the root .gitignore
+# Un-ignore directories/files blocked by the root .gitignore
 !tests/
 !tests/**
+!models/
+!models/**
 
 # Never commit bytecode caches
 **/__pycache__/
