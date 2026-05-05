@@ -1,0 +1,32 @@
+# realtime_devo configuration
+# Matches DEVO defaults where applicable.
+
+sensor:
+  H: 480                  # sensor height (pixels)
+  W: 640                  # sensor width  (pixels)
+  n_bins: 5               # voxel temporal bins (must match model checkpoint)
+
+pipeline:
+  window_size: 30000      # events per voxel window
+  stride: 30000           # events advanced between consecutive windows
+                          # (stride == window_size → non-overlapping)
+  buffer_capacity: 2000000  # ring-buffer capacity (events)
+
+voxelizer:
+  device: cuda            # torch device for voxel tensors
+
+normalization:
+  mode: rescale           # one of: none | rescale | standard
+                          #   rescale  → neg∈[-1,0), pos∈(0,1]  (DEVO default at inference)
+                          #   standard → zero-mean / unit-std over nonzero events
+
+patch_selector:
+  method: scorer          # one of: scorer | gradient | random
+  patches_per_frame: 96   # DEVO default
+
+slam:
+  buffer_size: 2048       # max keyframes
+  patch_lifetime: 13      # edges per patch
+  optimization_window: 10
+  keyframe_thresh: 4.0
+  mixed_precision: true
