@@ -1,3 +1,8 @@
 # Un-ignore the tests directory blocked by the root .gitignore
 !tests/
 !tests/**
+
+# Never commit bytecode caches
+**/__pycache__/
+*.pyc
+*.pyo
